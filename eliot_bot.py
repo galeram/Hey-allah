@@ -23634,6 +23634,20 @@ async def main() -> None:
                   "[bot] connection loop error (%s): %s",
                   type(exc).__name__, str(exc) or repr(exc),
               )
+              _fw = getattr(exc, "seconds", None)
+              if type(exc).__name__ == "FloodWaitError" and isinstance(_fw, int):
+                  # Telegram told us exactly how long to wait; retrying sooner extends the ban.
+                  delay = max(delay, _fw + 5.0)
+              elif type(exc).__name__ in ("AuthKeyUnregisteredError", "AuthKeyInvalidError", "AuthKeyDuplicatedError"):
+                  # The in-memory bot auth key is dead but the client still reports
+                  # "connected", so start() was never re-run and the bot stayed dead.
+                  # Drop the key and the connection so the next loop logs in again.
+                  try:
+                      bot_client._sender.auth_key.key = None
+                      bot_client.session.auth_key = None
+                      await asyncio.wait_for(bot_client.disconnect(), timeout=15)
+                  except Exception as _reset_err:
+                      log.warning("[bot] auth key reset failed: %s", _reset_err)
           await asyncio.sleep(delay)
           delay = min(delay * 2.0, 180.0)
 
