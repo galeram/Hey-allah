@@ -2,6 +2,15 @@
 
 from __future__ import annotations
 import os
+
+# Memory: with ~100 Telegram clients the default glibc allocator keeps many arenas
+# and never returns freed pages, so RSS grows until the container is OOM-killed.
+try:
+    import ctypes as _ctypes
+    _libc = _ctypes.CDLL("libc.so.6")
+    _libc.mallopt(-8, 2)  # M_ARENA_MAX = 2
+except Exception:
+    _libc = None
 import sys
 import json
 import asyncio
@@ -23712,6 +23721,18 @@ async def main() -> None:
                       pass
                   _bot_last_ping[0] = time.monotonic()
 
+    async def _memory_trim_loop():
+      """Periodically give freed memory back to the OS (keeps RSS under the container limit)."""
+      import gc
+      while True:
+          await asyncio.sleep(120)
+          try:
+              gc.collect()
+              if _libc is not None:
+                  _libc.malloc_trim(0)
+          except Exception:
+              pass
+
     tasks = []
     if main_session_has_auth:
       tasks.append(asyncio.create_task(_run_main_client_forever(), name="main-client-supervisor"))
@@ -23719,6 +23740,7 @@ async def main() -> None:
       tasks.append(asyncio.ensure_future(_run_bot_forever()))
       tasks.append(asyncio.ensure_future(_bot_ping_watchdog()))
     tasks.append(asyncio.ensure_future(keep_alive_server()))
+    tasks.append(asyncio.ensure_future(_memory_trim_loop()))
     tasks.append(asyncio.ensure_future(auto_reconnect_loop()))
     tasks.append(asyncio.ensure_future(auto_delete_offline_accounts_loop()))
     asyncio.create_task(_startup_autoseen_autoreact_loops())
