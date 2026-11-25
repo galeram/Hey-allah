@@ -181,6 +181,10 @@ _PERSISTENT_ROOT = os.path.abspath(
     or PROJECT_DIR
 )
 
+if _PERSISTENT_ROOT == os.path.abspath(PROJECT_DIR):
+    print("[WARNING] No persistent volume (NOBATI_DATA_ROOT / RAILWAY_VOLUME_MOUNT_PATH unset): "
+          "sessions and data are lost on every restart or redeploy. Attach a Railway Volume.", flush=True)
+
 ADMINS = {OWNER_ID}
 GLOBAL_ADMINS: Set[int] = set()
 CO_OWNERS: Set[int] = set()
