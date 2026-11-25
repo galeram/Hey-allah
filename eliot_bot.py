@@ -203,6 +203,34 @@ LOG_REPORT_STATE = os.path.join(DATA_DIR, "log_report_state.json")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
+# A Telegram .session file must not be opened by two running copies of this bot.
+# The OS releases this lock automatically when the process exits/crashes.
+_INSTANCE_LOCK_HANDLE = None
+
+def _acquire_single_instance_lock() -> None:
+    global _INSTANCE_LOCK_HANDLE
+    lock_path = os.path.join(_PERSISTENT_ROOT, ".nobati-instance.lock")
+    os.makedirs(os.path.dirname(lock_path) or ".", exist_ok=True)
+    handle = open(lock_path, "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except (OSError, BlockingIOError) as exc:
+        handle.close()
+        raise RuntimeError(
+            "Another Nobati process is already running with this data/session directory"
+        ) from exc
+    _INSTANCE_LOCK_HANDLE = handle
+
 
 def _migrate_legacy_runtime_files() -> None:
     """Copy existing local state to a newly attached Railway Volume, without overwriting it."""
@@ -3322,6 +3350,12 @@ async def _start_worker_unlocked(session_name: str, phone: Optional[str] = None)
 
 async def start_worker(session_name: str, phone: Optional[str] = None) -> None:
     """Start a session after serializing its SQLite session-file lifecycle."""
+    if session_name in (MAIN_SESSION, "bot_session"):
+        log.warning(
+            "[start_worker] %s is a system session and is managed by its dedicated client; skipping duplicate worker",
+            session_name,
+        )
+        return
     async with _get_session_client_lock(session_name):
         # A session must never be opened by the protected worker and normal worker
         # at the same time; both clients would share one Telegram auth key/session DB.
@@ -23441,6 +23475,9 @@ async def startup_existing_sessions() -> None:
 
     startup_jobs = []
     for name, info in list(sessions_db.items()):
+      if name in (MAIN_SESSION, "bot_session"):
+          log.warning("[startup] %s is managed separately; skipping duplicate session worker", name)
+          continue
       if name in manually_disabled:
           log.warning(f"[startup] {name} is manually disabled — skipping")
           disabled_to_protect.append(name)
@@ -24742,6 +24779,11 @@ async def auto_reconnect_loop() -> None:
 
 if __name__ == "__main__":
     import time
+    try:
+        _acquire_single_instance_lock()
+    except RuntimeError as lock_error:
+        print(f"[INSTANCE-LOCK] {lock_error}")
+        sys.exit(0)
     while True:
       try:
           asyncio.run(main())
