@@ -1030,7 +1030,7 @@ async def _apply_privacy_hardening(client: "TelegramClient", session_name: str =
     • عکس پروفایل     → آشنایان
     • فوروارد پیام‌ها  → هیچکس (جلوی لینک شدن به این اکانت رو می‌گیره)
     """
-    from telethon.tl.functions.account import UpdatePrivacyRequest
+    from telethon.tl.functions.account import SetPrivacyRequest
     from telethon.tl.types import (
       InputPrivacyKeyStatusTimestamp,
       InputPrivacyKeyPhoneNumber,
@@ -1048,7 +1048,7 @@ async def _apply_privacy_hardening(client: "TelegramClient", session_name: str =
     ]
     for label, key, rules in steps:
       try:
-          await client(UpdatePrivacyRequest(key=key, rules=rules))
+          await client(SetPrivacyRequest(key=key, rules=rules))
           results[label] = "✅"
       except Exception as _pe:
           results[label] = f"❌ {str(_pe)[:40]}"
